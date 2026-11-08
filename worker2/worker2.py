@@ -30,7 +30,8 @@ STATE_IN = os.path.abspath("prev/state.json")   # decrypted by the workflow when
 STATE_OUT = os.path.join(OUT, "state.json")      # re-encrypted by the workflow
 
 # Model choice: tested from this runner in probe mode (one-word prompt, timing).
-MODEL_CANDIDATES = ["gemini-2.5-flash", "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-2.0-flash"]
+MODEL_CANDIDATES = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash",
+                    "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-flash-lite-latest", "gemini-flash-latest"]
 MODEL_TIMEOUT = 60
 CTX = _ssl_context()
 
@@ -84,6 +85,8 @@ def test_models():
         try:
             text, secs = gemini(m, "Reply with one word: ok", timeout=30)
             report["tests"].append({"model": m, "reply": text.strip()[:40], "seconds": secs})
+        except urllib.error.HTTPError as e:
+            report["tests"].append({"model": m, "error": f"HTTP {e.code}: {e.read().decode(errors='replace')[:300]}"})
         except Exception as e:
             report["tests"].append({"model": m, "error": str(e)[:300]})
     return report
@@ -217,6 +220,13 @@ def probe(m):
         print("model test:", t.get("model"), t.get("seconds", t.get("skipped", "error")))
 
 
+def models_only():
+    rep = {"models": test_models()}
+    save("report.json", rep)
+    for t in rep["models"]["tests"]:
+        print("model test:", t.get("model"), t.get("seconds", t.get("skipped", "error")))
+
+
 def run(m):
     rep = {}
     tr, _ = transcribe(m)
@@ -264,6 +274,9 @@ def submit(m):
 def main():
     mode = (sys.argv[1] if len(sys.argv) > 1 else "probe").strip()
     os.makedirs(OUT, exist_ok=True)
+    if mode == "models":
+        models_only()
+        return
     m = MCP(os.environ["JOB2_URL"], os.path.join(OUT, "log.jsonl"), client_name="job2-actions", timeout=180)
     m.initialize()
     try:

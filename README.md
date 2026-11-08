@@ -13,6 +13,7 @@ Change the first word of `mode.txt` and push:
 
 | mode | what it does |
 |---|---|
+| `models` | one-word test of the AI models only; no call to the job |
 | `probe` | read-only look: the job's tools and skill, a one-word test of the AI models, the clip's transcript |
 | `run` | skill steps 1–3: transcribe, one note per finding, confirm; stops before submit |
 | `submit` | skill step 4: hands in the confirmed notes |
