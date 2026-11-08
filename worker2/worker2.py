@@ -95,7 +95,7 @@ def test_models():
 def pick_models(cfg_path=os.path.join(HERE, "models.json")):
     with open(cfg_path) as f:
         cfg = json.load(f)
-    return cfg["primary"], cfg["fallback"]
+    return cfg["models"]
 
 
 # ---------------------------------------------------------------- helpers
@@ -168,25 +168,40 @@ Transcript:
 
 
 def extract_findings(segs):
-    primary, fallback = pick_models()
+    """Ask the tested models in order; up to 3 tries each on a busy reply or timeout."""
     transcript = "\n".join(f"@{o} {t}" for o, t in segs)
-    last_err = None
-    for model in (primary, fallback):
-        try:
-            text, secs = gemini(model, PROMPT + transcript, json_mode=True)
-            data = json.loads(text)
-            items = data["findings"] if isinstance(data, dict) else data
-            valid = {o for o, _ in segs}
-            cleaned = []
-            for it in items:
-                at = mmss(it["at"])
-                if at not in valid:
-                    raise ValueError(f"offset {at} is not a segment offset")
-                cleaned.append({"what": it["what"].strip().rstrip("."), "at": at})
-            return cleaned, {"model": model, "seconds": secs}
-        except Exception as e:
-            last_err = f"{model}: {e}"
-    raise RuntimeError(f"both models failed: {last_err}")
+    valid = {o for o, _ in segs}
+    errors = []
+    for model in pick_models():
+        for attempt in range(3):
+            try:
+                text, secs = gemini(model, PROMPT + transcript, json_mode=True)
+            except urllib.error.HTTPError as e:
+                errors.append(f"{model} try {attempt + 1}: HTTP {e.code} {e.read().decode(errors='replace')[:160]}")
+                if e.code >= 500 or e.code == 429:
+                    time.sleep(5 * (attempt + 1))
+                    continue
+                break  # 4xx other than 429: this model will not work, go to the next
+            except Exception as e:
+                errors.append(f"{model} try {attempt + 1}: {e}")
+                time.sleep(5 * (attempt + 1))
+                continue
+            try:
+                data = json.loads(text)
+                items = data["findings"] if isinstance(data, dict) else data
+                cleaned = []
+                for it in items:
+                    at = mmss(it["at"])
+                    if at not in valid:
+                        raise ValueError(f"offset {at} is not a segment offset")
+                    cleaned.append({"what": it["what"].strip().rstrip("."), "at": at})
+                save("model_attempts.json", errors)
+                return cleaned, {"model": model, "seconds": secs, "earlier_errors": errors}
+            except Exception as e:
+                errors.append(f"{model} try {attempt + 1}: bad answer: {e}; {text[:200]}")
+                break
+    save("model_attempts.json", errors)
+    raise RuntimeError("all models failed: " + " | ".join(errors))
 
 
 # ---------------------------------------------------------------- modes
