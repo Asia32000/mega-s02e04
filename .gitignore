@@ -1,0 +1,5 @@
+out/
+prev/
+*.link
+.env
+__pycache__/

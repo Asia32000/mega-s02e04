@@ -1,0 +1,72 @@
+name: job2-worker
+
+# Job 2 (voice-to-memo) runs here, away from the student's Mac.
+# A push that changes mode.txt starts it. The first word of mode.txt is the mode:
+# probe, run or submit (see worker2/worker2.py).
+on:
+  push:
+    branches: [main]
+    paths: [mode.txt]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: job2
+  cancel-in-progress: false
+
+jobs:
+  work:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore saved state (encrypted with the job link)
+        env:
+          JOB2_URL: ${{ secrets.JOB2_URL }}
+        run: |
+          mkdir -p prev
+          if git fetch --depth 1 origin results:results 2>/dev/null && git show results:state.enc > prev/state.enc 2>/dev/null; then
+            openssl enc -d -aes-256-cbc -pbkdf2 -in prev/state.enc -out prev/state.json -pass env:JOB2_URL && echo "state restored"
+          else
+            echo "no saved state"
+          fi
+
+      - name: Run the job 2 worker
+        env:
+          JOB2_URL: ${{ secrets.JOB2_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python3 -I worker2/worker2.py "$(awk 'NR==1{print $1}' mode.txt)"
+
+      - name: Encrypt the output for the harness and save it to the results branch
+        if: always()
+        env:
+          JOB2_URL: ${{ secrets.JOB2_URL }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -e
+          mkdir -p out
+          echo "mode=$(awk 'NR==1{print $1}' mode.txt) run=$RUN_ID sha=$GITHUB_SHA" > out/run.txt
+          tar czf /tmp/out.tgz -C out .
+          openssl rand -hex 32 > /tmp/k
+          openssl enc -aes-256-cbc -pbkdf2 -salt -in /tmp/out.tgz -out /tmp/out.bin -pass file:/tmp/k
+          openssl pkeyutl -encrypt -pubin -inkey worker2/harness.pub.pem -in /tmp/k -out /tmp/out.key
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git rev-parse --verify -q results >/dev/null; then
+            git worktree add /tmp/rb results
+          else
+            git worktree add --orphan -b results /tmp/rb
+          fi
+          cp /tmp/out.bin "/tmp/rb/out-$RUN_ID.bin"
+          cp /tmp/out.key "/tmp/rb/out-$RUN_ID.key"
+          if [ -f out/state.json ]; then
+            openssl enc -aes-256-cbc -pbkdf2 -salt -in out/state.json -out /tmp/rb/state.enc -pass env:JOB2_URL
+          fi
+          cd /tmp/rb
+          git add -A
+          git commit -q -m "job2 output, run $RUN_ID"
+          git push -q origin results
+          echo "encrypted output saved as out-$RUN_ID on the results branch"
