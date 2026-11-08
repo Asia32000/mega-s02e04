@@ -251,6 +251,15 @@ def run(m):
     if not segs:
         save("report.json", rep)
         sys.exit("no segments in the transcript")
+    # before writing: a fresh transcribe should start with no notes; if old ones are
+    # still there, stop so the harness can decide (writing more would duplicate them)
+    data, raw = m.call("memo_search", {"step": step})
+    step = step_of(data) or step
+    rep["search_before"] = raw
+    already = (data.get("notes") or []) if isinstance(data, dict) else []
+    if already:
+        save("report.json", rep)
+        sys.exit(f"{len(already)} notes already stored after transcribe; stopping without writing")
     findings, rep["model"] = extract_findings(segs)
     notes = [f"{f['what']} @{f['at']}" for f in findings]
     rep["notes_planned"] = notes
@@ -259,13 +268,26 @@ def run(m):
         data, _ = m.call("memo_write", {"text": n, "step": step})
         step = step_of(data) or step
         written.append(n)
-    # confirm: search with no query, compare, write what is missing, search again
+    # confirm: search with no query; a stored note shows as its offset, its length
+    # and its first characters, so match on those, never on the whole text.
+    def stored_notes(data):
+        return [n for n in (data.get("notes") or []) if isinstance(n, dict)] if isinstance(data, dict) else []
+
+    def is_stored(note, stored):
+        off = "@" + note.rsplit(" @", 1)[1]
+        return any(sn.get("at") == off and sn.get("chars") == len(note)
+                   and note.startswith(str(sn.get("text", ""))) for sn in stored)
+
     for attempt in range(2):
         data, raw = m.call("memo_search", {"step": step})
         step = step_of(data) or step
         rep[f"search_{attempt}"] = raw
-        blob = json.dumps(data, ensure_ascii=False)
-        missing = [n for n in notes if n not in blob and json.dumps(n, ensure_ascii=False)[1:-1] not in blob]
+        stored = stored_notes(data)
+        if len(stored) > len(notes):
+            rep["stopped"] = f"{len(stored)} notes stored, {len(notes)} planned"
+            save("report.json", rep)
+            sys.exit("more notes stored than planned; stopping without writing")
+        missing = [n for n in notes if not is_stored(n, stored)]
         rep[f"missing_{attempt}"] = missing
         if not missing:
             break
