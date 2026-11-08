@@ -1,1 +1,2 @@
-{"primary": "gemini-2.5-flash", "fallback": "gemini-2.5-flash-lite"}
+{"primary": "gemini-3.6-flash", "fallback": "gemini-3.5-flash",
+ "tested": "2026-11-08 from the Actions runner, one-word prompt: 3.6-flash 1.37 s, 3.5-flash 2.03 s; 2.5-flash 404, flash-latest 503/timeout"}
